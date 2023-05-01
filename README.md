@@ -1,4 +1,6 @@
-# :fire: Automatic Site Backup
+# :fire: Automatic Backup
+
+##### _Scheduled database and file backup_
 
 <div style="text-align:center">
 
@@ -12,7 +14,35 @@
 
 >Internal service for creating scheduled backups of site and database files
 
+The utility will allow:
+
+- tracking changes;
+- creation of backup copies of only updated data;
+- download full resource archive for the selected date;
+- setting up automatic periodic tracking of data changes on the server.
+
+### Description of work
+
+```go
+go test ./...
+go build
+```
+
+```mermaid
+sequenceDiagram
+Client->> Server: Requesting a file
+Server-->> Client: Getting the file
+Client->> Database: Compare hash
+Database-->> Client: Hash check result
+Client->> Database: Saving a new file
+```
+
 ## ✨ _Git Flow_ ✨
+
+- git pull - update local repository
+- git branch - query the current branch
+- git checkout `develop` - go to branch develop
+- git checkout -b `feature-detail` - create and switch to a new branch
 
 - branch `main` - release history
 - branch `develop` - all functions
