@@ -1,0 +1,26 @@
+[
+	{
+		"name": "site1.ru",
+		"port": "22",
+		"host": "",
+		"login": "",
+		"password": "",
+		"bdlogin": "",
+		"bdpassword": "",
+		"backupdate": "0 0 1 * *",
+		"directory": "/",
+		"savedirectory": ""
+	},
+	{
+		"name": "site2.ru",
+		"port": 22,
+		"host": "host.host",
+		"login": "root",
+		"password": "12345",
+		"bdlogin": "sqllogin",
+		"bdpassword": "sqlpassword",
+		"backupdate": "0 0 1 * *",
+		"directory": "/",
+		"savedirectory": ""
+	}
+]

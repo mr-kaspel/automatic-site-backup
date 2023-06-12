@@ -1,25 +1,20 @@
-# :fire: Automatic Backup
+# :fire: Snapshot
 
-##### _Scheduled database and file backup_
-
-<div style="text-align:center">
+##### _Snapshot anything quickly and efficiently_
 
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/mr-kaspel/automatic-site-backup)
-
 ![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/mr-kaspel/automatic-site-backup)
-
 ![GitHub last commit](https://img.shields.io/github/last-commit/mr-kaspel/automatic-site-backup)
 
-</div>
+>Utility to create snapshots of files and database of selected resources.
 
->Internal service for creating scheduled backups of site and database files
+Snapshot - has both CLI (command-line interface). Snapshot, includes gzip, deduplication. Snapshot creates snapshots of the selected resource at a specified frequency.
 
 The utility will allow:
 
 - tracking changes;
-- creation of backup copies of only updated data;
-- download full resource archive for the selected date;
-- setting up automatic periodic tracking of data changes on the server.
+- creating snapshots of only changed data;
+- download the full archive of the resource for the selected date.
 
 ### Description of work
 
