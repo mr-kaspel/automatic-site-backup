@@ -23,13 +23,42 @@ go test ./...
 go build
 ```
 
+### Available commands
+
+```go
+// help
+snt -h
+// add resource
+snt -a site.ru
+// edit resource data
+snt -e *project ID* *data field name* *new value*
+// list all resources
+snt -l
+// delete the specified resource
+snt -d *project ID*
+// display all settings of the selected resource
+snt -s *project ID*
+// create a resource snapshot
+snt -c *project ID*
+// take snapshot of all projects
+snt -cl
+// list all available snapshots
+snt -ls *project ID*
+// request a specific project snapshot
+snt -gs *project ID* *snapshot ID*
+// request a file or an entire directory from a specific snapshot
+snp -gsf *project ID* *snapshot ID* *directory*
+// compare two pictures
+snp -sc *project ID* *snapshot ID first* *snapshot ID second*
+```
+
 ```mermaid
 sequenceDiagram
-Client->> Server: Requesting a file
-Server-->> Client: Getting the file
-Client->> Database: Compare hash
-Database-->> Client: Hash check result
-Client->> Database: Saving a new file
+Client->> Server: Requesting a resource file
+Server-->> Client: Getting a resource file
+Server->> Database: Request for a database snapshot
+Database-->> Server: Getting the file database snapshot
+Server->> Client: Getting the file database snapshot
 ```
 
 ## ✨ _Git Flow_ ✨
@@ -42,5 +71,7 @@ Client->> Database: Saving a new file
 - branch `main` - release history
 - branch `develop` - all functions
 - branch `feature` - individual functions
+
+- git push origin develop - pour into the thread
 
 [Clue](https://www.atlassian.com/ru/git/tutorials/comparing-workflows/gitflow-workflow)

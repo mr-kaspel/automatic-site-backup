@@ -14,7 +14,7 @@ var cmd = map[string]interface{}{
 	"h":        help,
 	"a":        add, // 2 // -a site.ru
 	"add":      add,
-	"e":        edit, // 3 // -e *project ID*
+	"e":        edit, // 3 // -e *project ID* *data field name* *new value*
 	"edit":     edit,
 	"list":     configurationDataOutput, // 4 // data output from the configuration file
 	"l":        configurationDataOutput,
@@ -22,11 +22,13 @@ var cmd = map[string]interface{}{
 	"delet":    delet,
 	"s":        settings, // 6 // s- *project ID*
 	"settings": settings,
-	"sn":       snapshot, // 7 // -sn *project ID*
-	"snapshot": snapshot,
-	"sna":      snapshotAll,  // 8
-	"ls":       listSnapshot, // 9 // -ls *project ID*
-	"gs":       getSnapshot,  // 10 // -gs *snapshot ID*
+	"c":        snapshot, // 7 // -sn *project ID*
+	"create":   snapshot,
+	"cl":       snapshotAll,        // 8
+	"ls":       listSnapshot,       // 9 // -ls *project ID*
+	"gs":       getSnapshot,        // 10 // -gs *project ID* *snapshot ID*
+	"gsf":      getSnapshotFiles,   // 11 // -gsf *project ID* *snapshot ID* *directory*
+	"sc":       SnapshotComparison, // 12 // -sc *project ID* *snapshot ID* *snapshot ID*
 }
 
 func help(argument []string) {
@@ -62,7 +64,7 @@ func configurationDataOutput(argument []string) {
 
 	jsonStr := storages.ReadConfigurationFile()
 
-	//if the file is empty we request project data
+	// if the file is empty we request project data
 	if len(jsonStr) != 0 {
 		json.Unmarshal(jsonStr, &dataJson)
 
@@ -109,8 +111,20 @@ func getSnapshot(argument []string) {
 	*/
 }
 
-func PressCommand(flag string, argument []string) {
-	if cmd, err := CommandProcessing(flag, argument); err != nil {
+func getSnapshotFiles(argument []string) {
+	/*
+		To get the files or directory from the selected snapshot, type 'snp -gsf *project ID* *snapshot ID* *directory*'
+	*/
+}
+
+func SnapshotComparison(argument []string) {
+	/*
+		To compare two snapshots, type 'snp -sc *project ID* *snapshot ID* *snapshot ID'
+	*/
+}
+
+func pressCommand(flag string, argument []string) {
+	if cmd, err := commandProcessing(flag, argument); err != nil {
 
 	} else {
 		fmt.Printf("> no such command `%s`\n", cmd)
@@ -118,7 +132,10 @@ func PressCommand(flag string, argument []string) {
 
 }
 
-func CommandProcessing(input string, argument []string) (string, error) {
+func commandProcessing(input string, argument []string) (string, error) {
+	// check for incorrectly specified order of flags
+	input = checkFlags(input)
+	// calling the necessary function determined by the passed flags
 	if _, ok := cmd[input]; ok {
 		cmd[input].(func(argument []string))(argument)
 		return input, fmt.Errorf("total errors: %d", 0)
@@ -127,13 +144,36 @@ func CommandProcessing(input string, argument []string) (string, error) {
 	}
 }
 
+func checkFlags(flag string) string {
+
+	for name, _ := range cmd {
+		if len(name) == len(flag) {
+			hitCounter := 0
+			for _, letterName := range name {
+				for _, letterInput := range flag {
+					if letterName == letterInput {
+						hitCounter++
+					}
+				}
+			}
+
+			if hitCounter == len(name) {
+				fmt.Println(name)
+				return name
+			}
+		}
+	}
+
+	return flag
+}
+
 func Initialization() {
 	arrayArguments := os.Args[1:]
 
 	// define flags
 	flag := strings.Replace(arrayArguments[0], "-", "", 1)
 
-	PressCommand(flag, arrayArguments[1:])
+	pressCommand(flag, arrayArguments[1:])
 
 	// check and create config file
 	storages.CreatingConfigurationFile()
