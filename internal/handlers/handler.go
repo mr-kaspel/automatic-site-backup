@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,20 +38,39 @@ func help(argument []string) {
 }
 
 func add(argument []string) {
-	/*
-		To add a project, type `snt -a site.ru`
-		Next, you will be prompted to enter:
-		    - stap project name;
-		    - stap port (21 FTP, 22 SFTP);
-		    - stap server address;
-		    - stap login S\\FTP;
-		    - stap password S\\FTP;
-		    - stap bd login;
-		    - stap bd password;
-		    - stap backup frequency in cron task syntax.
-		    - stap root directory string `json: "directory"`
-		    - stap save directory string `json: "savedirectory"`
-	*/
+	var data storages.Configuration
+	var answersQuestions []string
+	var input string
+	questions := []string{
+		"Enter the port to connect to the remote server (21 FTP, 22 SFTP):",
+		"Enter the address of the remote server:", "Enter the login from the account to connect to the remote server:",
+		"Enter the password for the account to connect to the remote server:",
+		"Enter the login from the account to connect to the database:",
+		"Enter the password for the account to connect to the database:",
+		"Enter the desired frequency to automatically create a project snapshot:",
+		"Enter the full path to the project root directory on the remote server:",
+		"Enter the address of the local directory where you want to save the project snapshot:",
+	}
+
+	// collecting answers to questions
+	answersQuestions = append(answersQuestions, argument[0])
+	for _, quest := range questions {
+		fmt.Println(quest)
+
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+
+		input = scanner.Text()
+		answersQuestions = append(answersQuestions, input)
+	}
+
+	// write down the responses
+	// data validation
+	// ...
+	mapData := data.TransformationReceivedData(answersQuestions)
+
+	// saving data
+	data.SavingReceivedData(mapData)
 }
 
 func edit(argument []string) {
@@ -158,7 +178,6 @@ func checkFlags(flag string) string {
 			}
 
 			if hitCounter == len(name) {
-				fmt.Println(name)
 				return name
 			}
 		}
