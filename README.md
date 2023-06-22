@@ -21,9 +21,17 @@ The utility will allow:
 The first snapshot contains absolutely all files and directories of the project, subsequent snapshots contain only the changed data.
 The utility allows you to simplify the process of creating snapshots of multiple projects, with the ability to easily manage previously created snapshots.
 
-### Reason for creation
+### Main
 
-This pet-project was created for educational purposes and with possible future potential to simplify the work of creating backup copies.
+Backup is the process of creating copies of data that can be used to restore information in case of loss or damage. It is important to make regular backups of your data to protect your information from loss due to technical failures, user errors, or cyberattacks.
+
+You can use various methods to create backups, including local storage on hard drives, using cloud services, or creating copies on removable media. It is important to choose the appropriate backup method that suits your organization's requirements.
+
+In addition, it is necessary to determine the frequency of backups and their retention period. The frequency should depend on the importance of the data and how often it changes. Backup storage should also comply with your organization's policies and laws.
+
+It is also important to conduct regular checks of backups to ensure their integrity and the ability to restore data if necessary.
+
+Finally, don't forget about the security of your backups. Backups should be stored in a secure location protected from unauthorized access. In addition, data in backups must be encrypted to protect against information leaks.
 
 ### Description of work
 
@@ -71,6 +79,10 @@ Server->> Database: Request for a database snapshot
 Database-->> Server: Getting the file database snapshot
 Server->> Client: Getting the file database snapshot
 ```
+
+### Reason for creation
+
+This pet-project was created for educational purposes and with possible future potential to simplify the work of creating backup copies.
 
 ## ✨ _Git Flow_ ✨
 
