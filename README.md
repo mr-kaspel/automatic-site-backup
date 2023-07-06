@@ -1,5 +1,7 @@
 # :fire: Snapshot
 
+![Snapshot](/assets/snapshot.png)
+
 ##### _Snapshot anything quickly and efficiently_
 
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/mr-kaspel/automatic-site-backup)
@@ -15,7 +17,7 @@ The utility will allow:
 - create snapshots of files and databases;
 - compare pictures;
 - request files or directories from created snapshots;
-- request an archive of a previously taken snapshot
+- request an archive of a previously taken snapshot;
 - download the full resource archive for the selected date.
 
 The first snapshot contains absolutely all files and directories of the project, subsequent snapshots contain only the changed data.
