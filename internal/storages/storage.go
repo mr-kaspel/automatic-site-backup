@@ -1,25 +1,25 @@
 package storages
 
 import (
-	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"os"
-	"reflect"
+
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 const сonfig = "config.json"
 
 type Configuration struct {
-	Name          string `json:"name"`
-	Port          string `json:"port"`
-	Host          string `json:"host"`
-	Login         string `json:"login"`
-	Password      string `json:"password"`
-	DBlogin       string `json:"bdlogin"`
-	DBpassword    string `json:"bdpassword"`
-	BackupDate    string `json: "backupdate"`
-	RootDirectory string `json: "directory"`
-	SaveDirectory string `json: "savedirectory"`
+	Name          string `msgpack:"name"`
+	Port          string `msgpack:"port"`
+	Host          string `msgpack:"host"`
+	Login         string `msgpack:"login"`
+	Password      string `msgpack:"password"`
+	DBlogin       string `msgpack:"dblogin"`
+	DBpassword    string `msgpack:"dbpassword"`
+	RootDirectory string `msgpack:"rootdirectory"`
+	SaveDirectory string `msgpack:"savedirectory"`
 }
 
 func ReadConfigurationFile() []byte {
@@ -54,47 +54,160 @@ func CreatingConfigurationFile() {
 	}
 }
 
-func (c *Configuration) TransformationReceivedData(input []string) map[string]string {
-	var mapData map[string]string
+func (c *Configuration) SavingReceivedData(m map[string]string) {
+	const configDir = "sites"
+	const configFile = configDir + "/.config"
 
-	jsonData, err := json.Marshal(c)
+	// check and create directory if it does not exist
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		err := os.Mkdir(configDir, os.ModePerm)
+		if err != nil {
+			panic("Failed to create directory: " + err.Error())
+		}
+	}
 
+	// read existing data from a file if the file already exists
+	var configs []Configuration
+	if _, err := os.Stat(configFile); err == nil {
+		data, err := os.ReadFile(configFile)
+		if err != nil {
+			panic("Failed to read configuration file: " + err.Error())
+		}
+
+		// decoding MsgPack data
+		err = msgpack.Unmarshal(data, &configs)
+		if err != nil {
+			panic("Failed to unmarshal configuration data: " + err.Error())
+		}
+	}
+
+	// convert map to Configuration structure
+	newConfig := Configuration{
+		Name:          m["name"],
+		Port:          m["port"],
+		Host:          m["host"],
+		Login:         m["login"],
+		Password:      m["password"],
+		DBlogin:       m["dblogin"],
+		DBpassword:    m["dbpassword"],
+		RootDirectory: m["rootdirectory"],
+		SaveDirectory: m["savedirectory"],
+	}
+
+	// add a new configuration to the list
+	configs = append(configs, newConfig)
+
+	// serialization of data in MsgPack format
+	outData, err := msgpack.Marshal(configs)
 	if err != nil {
-		panic(err)
+		panic("Failed to marshal updated configuration data: " + err.Error())
 	}
 
-	json.Unmarshal(jsonData, &mapData)
-	mappedToSlice := reflect.ValueOf(mapData).MapKeys()
-
-	for id, key := range mappedToSlice {
-		mapData[key.Interface().(string)] = input[id]
+	// writing data to a file
+	err = os.WriteFile(configFile, outData, 0644)
+	if err != nil {
+		panic("Failed to write to configuration file: " + err.Error())
 	}
-
-	return mapData
 }
 
-func (c *Configuration) SavingReceivedData(m map[string]string) {
-	var oldArray []Configuration
-
-	// get the current data from a file, there may be a problem with the amount of data
-	// ...
-	oldData := ReadConfigurationFile()
-	json.Unmarshal(oldData, &oldArray)
-
-	// converting new data
-	var newArray Configuration
-
-	jsonData, err := json.Marshal(m)
-
+func (c *Configuration) EditReceivedData(arguments []string) {
+	// parsing arguments
+	idStr, field, newValue := arguments[0], arguments[1], arguments[2]
+	id, err := strconv.Atoi(idStr)
 	if err != nil {
-		panic(err)
+		fmt.Printf("invalid id format: %v", err)
+		return
 	}
 
-	json.Unmarshal(jsonData, &newArray)
+	var data storages.Configuration
+	var dataBin = data.GetFileConfiguration()
+	configFile := "sites/.config"
 
-	oldArray = append(oldArray, newArray)
+	// check for the presence of a configuration with a given id
+	if id < 0 || id >= len(dataBin) {
+		fmt.Printf("configuration with id %d not found", id)
+		return
+	}
 
-	// oldArray convert to json
-	// overwrite file
-	// ...
+	// we get a link to the required configuration
+	config := &dataBin[id]
+
+	// check and change the value of the specified field
+	switch field {
+	case "name":
+		config.Name = newValue
+	case "port":
+		config.Port = newValue
+	case "host":
+		config.Host = newValue
+	case "login":
+		config.Login = newValue
+	case "password":
+		config.Password = newValue
+	case "dblogin":
+		config.DBlogin = newValue
+	case "dbpassword":
+		config.DBpassword = newValue
+	case "rootdirectory":
+		config.RootDirectory = newValue
+	case "savedirectory":
+		config.SaveDirectory = newValue
+	default:
+		fmt.Printf("invalid field name: %s", field)
+		return
+	}
+
+	// serializing the modified configuration array and writing to a file
+	updatedData, err := msgpack.Marshal(dataBin)
+	if err != nil {
+		fmt.Printf("failed to marshal updated configuration data: %v", err)
+		return
+	}
+
+	err = os.WriteFile(configFile, updatedData, 0644)
+	if err != nil {
+		fmt.Printf("failed to write updated configuration data to file: %v", err)
+		return
+	}
+
+	fmt.Println("Configuration updated successfully.")
+}
+
+func (c *Configuration) GetFileConfiguration() (m []Configuration) {
+	const configFile = "sites/.config"
+	var dataBin []Configuration
+
+	// Checking if a file exists
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		fmt.Println("Configuration file not found.")
+		return
+	}
+
+	// Reading data from a file
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		fmt.Println("Failed to read configuration file:", err)
+		return
+	}
+
+	// Checking if a file is empty
+	if len(data) == 0 {
+		fmt.Println("Configuration file is empty.")
+		return
+	}
+
+	// Decoding MsgPack data
+	err = msgpack.Unmarshal(data, &dataBin)
+	if err != nil {
+		fmt.Println("Failed to unmarshal configuration data:", err)
+		return
+	}
+
+	// Check that the data was decoded successfully and is not empty
+	if len(dataBin) == 0 {
+		fmt.Println("No configuration data found in the file.")
+		return
+	}
+
+	return dataBin
 }
