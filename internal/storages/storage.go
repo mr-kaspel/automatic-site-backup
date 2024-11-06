@@ -2,8 +2,8 @@ package storages
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
+	"strconv"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -22,43 +22,11 @@ type Configuration struct {
 	SaveDirectory string `msgpack:"savedirectory"`
 }
 
-func ReadConfigurationFile() []byte {
-	file, err := os.OpenFile(сonfig, os.O_RDONLY, 0777)
-
-	if err != nil {
-		panic(err)
-	}
-
-	jsonStr, err := ioutil.ReadAll(file)
-
-	if err != nil {
-		panic(err)
-	}
-
-	defer file.Close()
-
-	return jsonStr
-}
-
-func CreatingConfigurationFile() {
-	if _, err := os.Stat(сonfig); err != nil {
-		if os.IsNotExist(err) {
-			_, err := os.Create(сonfig)
-
-			if err != nil {
-				panic(err)
-			}
-		} else {
-			panic(err)
-		}
-	}
-}
-
-func (c *Configuration) SavingReceivedData(m map[string]string) {
+func (c *Configuration) SaveConfigurations(configs []Configuration) {
 	const configDir = "sites"
 	const configFile = configDir + "/.config"
 
-	// check and create directory if it does not exist
+	// checking and creating a directory if it does not exist
 	if _, err := os.Stat(configDir); os.IsNotExist(err) {
 		err := os.Mkdir(configDir, os.ModePerm)
 		if err != nil {
@@ -66,38 +34,7 @@ func (c *Configuration) SavingReceivedData(m map[string]string) {
 		}
 	}
 
-	// read existing data from a file if the file already exists
-	var configs []Configuration
-	if _, err := os.Stat(configFile); err == nil {
-		data, err := os.ReadFile(configFile)
-		if err != nil {
-			panic("Failed to read configuration file: " + err.Error())
-		}
-
-		// decoding MsgPack data
-		err = msgpack.Unmarshal(data, &configs)
-		if err != nil {
-			panic("Failed to unmarshal configuration data: " + err.Error())
-		}
-	}
-
-	// convert map to Configuration structure
-	newConfig := Configuration{
-		Name:          m["name"],
-		Port:          m["port"],
-		Host:          m["host"],
-		Login:         m["login"],
-		Password:      m["password"],
-		DBlogin:       m["dblogin"],
-		DBpassword:    m["dbpassword"],
-		RootDirectory: m["rootdirectory"],
-		SaveDirectory: m["savedirectory"],
-	}
-
-	// add a new configuration to the list
-	configs = append(configs, newConfig)
-
-	// serialization of data in MsgPack format
+	// serializing data in MsgPack format
 	outData, err := msgpack.Marshal(configs)
 	if err != nil {
 		panic("Failed to marshal updated configuration data: " + err.Error())
@@ -119,7 +56,7 @@ func (c *Configuration) EditReceivedData(arguments []string) {
 		return
 	}
 
-	var data storages.Configuration
+	var data Configuration
 	var dataBin = data.GetFileConfiguration()
 	configFile := "sites/.config"
 

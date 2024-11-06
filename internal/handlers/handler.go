@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/mr-kaspel/automatic-site-backup.git/internal/storages"
@@ -44,15 +45,11 @@ func help(arguments []string) {
 }
 
 func add(arguments []string) {
-	// argument validation utils
-	// ...
+	// checking arguments
 	if len(arguments) == 0 {
 		fmt.Println("Not all parameters are listed, please refer to the help")
 		return
 	}
-
-	// pass all arguments in one request
-	// ...
 
 	var data storages.Configuration
 	answersQuestions := make(map[string]string)
@@ -80,8 +77,27 @@ func add(arguments []string) {
 		answersQuestions[question.Key] = input
 	}
 
-	// saving data
-	data.SavingReceivedData(answersQuestions)
+	// create a Configuration object from responses
+	newConfig := storages.Configuration{
+		Name:          answersQuestions["name"],
+		Port:          answersQuestions["port"],
+		Host:          answersQuestions["host"],
+		Login:         answersQuestions["login"],
+		Password:      answersQuestions["password"],
+		DBlogin:       answersQuestions["dblogin"],
+		DBpassword:    answersQuestions["dbpassword"],
+		RootDirectory: answersQuestions["rootdirectory"],
+		SaveDirectory: answersQuestions["savedirectory"],
+	}
+
+	// reading current configurations from a file
+	var existingConfigs = data.GetFileConfiguration()
+
+	// adding a new configuration
+	existingConfigs = append(existingConfigs, newConfig)
+
+	// save all configurations
+	data.SaveConfigurations(existingConfigs)
 }
 
 func edit(arguments []string) {
@@ -110,9 +126,48 @@ func configurationDataOutput(arguments []string) {
 }
 
 func delet(arguments []string) {
-	/*
-		To remove the project from the list with all previously created snapshots, enter `snt -d *project ID*
-	*/
+	// checking arguments
+	if len(arguments) == 0 {
+		fmt.Println("Please provide the configuration id to delete.")
+		return
+	}
+
+	// parsing configuration id
+	idStr := arguments[0]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		fmt.Println("Invalid id format:", err)
+		return
+	}
+
+	var data storages.Configuration
+	var dataBin = data.GetFileConfiguration()
+
+	// check for the presence of a configuration with a given id
+	if id < 0 || id >= len(dataBin) {
+		fmt.Printf("Configuration with id %d not found\n", id)
+		return
+	}
+
+	// request for confirmation of deletion
+	fmt.Printf("Are you sure you want to delete configuration with id %d? Type 'yes' or 'y' to confirm: ", id)
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	confirmation := strings.ToLower(scanner.Text())
+
+	// checking the user's response
+	if confirmation != "yes" && confirmation != "y" {
+		fmt.Println("Deletion canceled.")
+		return
+	}
+
+	// removing configuration
+	dataBin = append(dataBin[:id], dataBin[id+1:]...)
+
+	// saving data
+	data.SaveConfigurations(dataBin)
+
+	fmt.Println("Configuration deleted successfully.")
 }
 
 func settings(arguments []string) {
@@ -207,7 +262,4 @@ func Initialization() {
 	flag := strings.Replace(arrayArguments[0], "-", "", 1)
 
 	pressCommand(flag, arrayArguments[1:])
-
-	// check and create config file
-	storages.CreatingConfigurationFile()
 }
