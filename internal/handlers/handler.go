@@ -4,10 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mr-kaspel/automatic-site-backup.git/internal/storages"
+	"github.com/mr-kaspel/automatic-site-backup.git/internal/utils"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 var cmd = map[string]interface{}{
@@ -118,8 +122,8 @@ func configurationDataOutput(arguments []string) {
 
 	// output each configuration on a new line
 	for i, config := range dataBin {
-		fmt.Printf("Configuration %d:\n", i+1)
-		fmt.Printf("Name: %s, Port: %s, Host: %s, Login: %s, Password: %s, DB Login: %s, DB Password: %s, Root Directory: %s, Save Directory: %s\n",
+		fmt.Printf("\033[38;2;31;111;235m Configuration %d:\033[0m\n", i+1)
+		fmt.Printf("\tName: %s\r\n\tPort: %s\r\n\tHost: %s\r\n\tLogin: %s\r\n\tPassword: %s\r\n\tDB Login: %s\r\n\tDB Password: %s\r\n\tRoot Directory: <%s>\r\n\tSave Directory: <%s>\n",
 			config.Name, config.Port, config.Host, config.Login, config.Password, config.DBlogin, config.DBpassword, config.RootDirectory, config.SaveDirectory)
 		fmt.Println() // empty line to separate configurations
 	}
@@ -171,15 +175,157 @@ func delet(arguments []string) {
 }
 
 func settings(arguments []string) {
-	/*
-		To get a list of all settings for a specific project, type `snt -s *project ID*`
-	*/
+	// parsing configuration id
+	idStr := arguments[0]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		fmt.Println("Invalid id format:", err)
+		return
+	}
+
+	var data storages.Configuration
+	var dataBin = data.GetFileConfiguration()
+
+	// search configuration by ID
+	if id <= 0 || id > len(dataBin) {
+		fmt.Printf("Configuration with ID %d not found.\n", id)
+		return
+	}
+
+	config := dataBin[id-1]
+
+	fmt.Printf("Configuration %d:\n", id)
+	fmt.Printf("\tName: %s\r\n\tPort: %s\r\n\tHost: %s\r\n\tLogin: %s\r\n\tPassword: %s\r\n\tDB Login: %s\r\n\tDB Password: %s\r\n\tRoot Directory: <%s>\r\n\tSave Directory: <%s>\n",
+		config.Name, config.Port, config.Host, config.Login, config.Password, config.DBlogin, config.DBpassword, config.RootDirectory, config.SaveDirectory)
+
 }
 
 func snapshot(arguments []string) {
-	/*
-		To create a snapshot of a specific project, type `snt -sn *project ID*`
-	*/
+	// parsing Configuration ID
+	idStr := arguments[0]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		fmt.Println("Invalid id format:", err)
+		return
+	}
+
+	// reading configurations
+	var data storages.Configuration
+	var dataBin = data.GetFileConfiguration()
+
+	// search configuration by ID
+	if id <= 0 || id > len(dataBin) {
+		fmt.Printf("Configuration with ID %d not found.\n", id)
+		return
+	}
+
+	config := dataBin[id-1]
+	saveDir := config.SaveDirectory
+	if saveDir == "" {
+		fmt.Println("Save directory is not specified in the configuration.")
+		return
+	}
+
+	// create a path to the hash file for a specific project
+	hashFilePath := filepath.Join(saveDir, fmt.Sprintf(".filehashes_%s", config.Name))
+	fileHashes := make(map[string]string)
+
+	// preparing a client connection (FTP/SFTP)
+	var client utils.FTPClient // interface for working with FTP/SFTP
+	if config.Port == "21" {
+		client, err = utils.NewFTPClient(config.Host, config.Login, config.Password)
+		if err != nil {
+			fmt.Println("Invalid FTP:", err)
+			return
+		}
+	} else if config.Port == "22" {
+		client, err = utils.NewSFTPClient(config.Host, config.Login, config.Password)
+		if err != nil {
+			fmt.Println("Invalid SFTP:", err)
+			return
+		}
+	} else {
+		fmt.Println("Unsupported port for connection.")
+		return
+	}
+	defer client.Close()
+
+	// reading existing hashes
+	if _, err := os.Stat(hashFilePath); err == nil {
+		hashData, err := os.ReadFile(hashFilePath)
+		if err == nil {
+			_ = msgpack.Unmarshal(hashData, &fileHashes)
+		}
+	}
+
+	// getting a list of files from the server
+	files, err := client.ListFiles(config.RootDirectory)
+	if err != nil {
+		fmt.Println("Failed to list files on the server:", err)
+		return
+	}
+
+	// list for updated hashes and files to download
+	updatedHashes := make(map[string]string)
+	filesToDownload := []string{}
+
+	// compare files
+	for _, file := range files {
+		filePath := filepath.Join(config.RootDirectory, file.Name)
+		// localFilePath := filepath.Join(saveDir, file.Name)
+
+		// current file hash
+		fileHash, err := client.HashFile(filePath)
+		if err != nil {
+			fmt.Printf("Failed to calculate hash for file %s: %v\n", filePath, err)
+			continue
+		}
+
+		// checking for changes
+		if existingHash, exists := fileHashes[filePath]; !exists || existingHash != fileHash {
+			filesToDownload = append(filesToDownload, filePath)
+		}
+
+		// saving a new hash
+		updatedHashes[filePath] = fileHash
+	}
+
+	// removing missing files from hashes
+	for path := range fileHashes {
+		if _, exists := updatedHashes[path]; !exists {
+			fmt.Printf("File %s has been removed from the server.\n", path)
+		}
+	}
+
+	// downloading modified files
+	for _, filePath := range filesToDownload {
+		localFilePath := filepath.Join(saveDir, filepath.Base(filePath))
+		err := client.DownloadFile(filePath, localFilePath)
+		if err != nil {
+			fmt.Printf("Failed to download file %s: %v\n", filePath, err)
+		} else {
+			fmt.Printf("Downloaded: %s\n", filePath)
+		}
+	}
+
+	// updating the hash file
+	hashData, err := msgpack.Marshal(updatedHashes)
+	if err == nil {
+		err = os.WriteFile(hashFilePath, hashData, 0644)
+		if err != nil {
+			fmt.Println("Failed to update hash file:", err)
+		}
+	}
+
+	// archiving
+	archiveName := fmt.Sprintf("backup_%s.tar.gz", time.Now().Format("20060102_150405"))
+	archivePath := filepath.Join(saveDir, archiveName)
+	err = utils.CreateTarGz(archivePath, saveDir)
+	if err != nil {
+		fmt.Println("Failed to create archive:", err)
+	} else {
+		fmt.Printf("Backup archive created: %s\n", archivePath)
+	}
 }
 
 func snapshotAll(arguments []string) {
@@ -257,6 +403,11 @@ func checkFlags(flag string) string {
 
 func Initialization() {
 	arrayArguments := os.Args[1:]
+
+	if len(arrayArguments) == 0 {
+		fmt.Println("Command not recognized.\n\rTo display help, enter: snp -h")
+		return
+	}
 
 	// define flags
 	flag := strings.Replace(arrayArguments[0], "-", "", 1)
