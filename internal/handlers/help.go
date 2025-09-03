@@ -17,10 +17,9 @@ In the next steps, you will be prompted to enter:
 	- database type (mysql, postgresql, sqlite);
 	- database host and port;
 	- database name or SQLite file path;
-	- backup script path on the server;
 	- resource root directory;
 	- directory for saving the snapshot on the local machine;
-	- backup frequency in cron task syntax.
+	- maximum number of threads for parallel processing (default: 4).
 ` + "\x1b[33m-e --edit\x1b[0m" + `	to change project settings. Settings can be changed in the config.json file. Required arguments: #project ID# #data field name# #new value#.
 ` + "\x1b[33m-l --list\x1b[0m" + `	to get a list of all added projects.
 ` + "\x1b[33m-d --delet\x1b[0m" + `	to remove the project from the list with all previously created snapshots. Required arguments: #project ID#.

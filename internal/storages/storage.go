@@ -19,13 +19,13 @@ type Configuration struct {
 	Password      string `msgpack:"password"`
 	DBlogin       string `msgpack:"dblogin"`
 	DBpassword    string `msgpack:"dbpassword"`
-	DBType        string `msgpack:"dbtype"`       // mysql, postgresql, sqlite
-	DBHost        string `msgpack:"dbhost"`       // хост БД (обычно localhost)
-	DBPort        string `msgpack:"dbport"`       // порт БД
-	DBDatabase    string `msgpack:"dbdatabase"`   // имя БД
-	BackupScript  string `msgpack:"backupscript"` // путь к PHP скрипту на сервере
+	DBType        string `msgpack:"dbtype"`     // mysql, postgresql, sqlite
+	DBHost        string `msgpack:"dbhost"`     // хост БД (обычно localhost)
+	DBPort        string `msgpack:"dbport"`     // порт БД
+	DBDatabase    string `msgpack:"dbdatabase"` // имя БД
 	RootDirectory string `msgpack:"rootdirectory"`
 	SaveDirectory string `msgpack:"savedirectory"`
+	MaxThreads    string `msgpack:"maxthreads"` // максимальное количество потоков (по умолчанию 4)
 }
 
 func (c *Configuration) SaveConfigurations(configs []Configuration) {
@@ -101,12 +101,12 @@ func (c *Configuration) EditReceivedData(arguments []string) {
 		config.DBPort = newValue
 	case "dbdatabase":
 		config.DBDatabase = newValue
-	case "backupscript":
-		config.BackupScript = newValue
 	case "rootdirectory":
 		config.RootDirectory = newValue
 	case "savedirectory":
 		config.SaveDirectory = newValue
+	case "maxthreads":
+		config.MaxThreads = newValue
 	default:
 		fmt.Printf("invalid field name: %s", field)
 		return

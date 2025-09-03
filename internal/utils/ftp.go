@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -491,4 +492,30 @@ func executeWithReconnect(client FTPClient, operation func() error) error {
 		}
 	}
 	return err
+}
+
+// GetMaxThreads returns the maximum number of threads for parallel processing
+// with validation and default fallback
+func GetMaxThreads(maxThreadsStr string) int {
+	if maxThreadsStr == "" {
+		return 4 // default value
+	}
+
+	maxThreads, err := strconv.Atoi(maxThreadsStr)
+	if err != nil {
+		fmt.Printf("Warning: Invalid maxthreads value '%s', using default (4)\n", maxThreadsStr)
+		return 4
+	}
+
+	// Validate range
+	if maxThreads < 1 {
+		fmt.Printf("Warning: maxthreads must be at least 1, using default (4)\n")
+		return 4
+	}
+	if maxThreads > 16 {
+		fmt.Printf("Warning: maxthreads is too high (%d), limiting to 16\n", maxThreads)
+		return 16
+	}
+
+	return maxThreads
 }

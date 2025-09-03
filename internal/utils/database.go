@@ -33,9 +33,7 @@ func BackupDatabase(config storages.Configuration, client FTPClient) error {
 		return fmt.Errorf("database type not specified")
 	}
 
-	if config.BackupScript == "" {
-		return fmt.Errorf("backup script path not specified")
-	}
+	// Script path is now fixed - no need to check config.BackupScript
 
 	fmt.Printf("Starting database backup for project: %s\n", config.Name)
 	fmt.Printf("Database type: %s\n", config.DBType)
@@ -110,8 +108,8 @@ func buildBackupScriptURL(config storages.Configuration) (string, error) {
 		return "", fmt.Errorf("unsupported protocol: %s", config.Protocol)
 	}
 
-	// Build the script URL
-	scriptURL := fmt.Sprintf("%s/%s", baseURL, strings.TrimPrefix(config.BackupScript, "/"))
+	// Build the script URL - using fixed script name
+	scriptURL := fmt.Sprintf("%s/db_backup.php", baseURL)
 
 	// Parse URL to add query parameters
 	u, err := url.Parse(scriptURL)
@@ -205,16 +203,8 @@ func UploadBackupScript(config storages.Configuration, client FTPClient) error {
 		return fmt.Errorf("backup script not found: %s", localScriptPath)
 	}
 
-	// Determine remote script path
-	remoteScriptPath := config.BackupScript
-	if remoteScriptPath == "" {
-		remoteScriptPath = "db_backup.php"
-	}
-
-	// Ensure remote path is relative to root directory
-	if !strings.HasPrefix(remoteScriptPath, "/") {
-		remoteScriptPath = filepath.Join(config.RootDirectory, remoteScriptPath)
-	}
+	// Use fixed script name in root directory
+	remoteScriptPath := filepath.Join(config.RootDirectory, "db_backup.php")
 
 	fmt.Printf("Uploading backup script to: %s\n", remoteScriptPath)
 
@@ -230,16 +220,8 @@ func UploadBackupScript(config storages.Configuration, client FTPClient) error {
 
 // DeleteBackupScript removes the PHP backup script from the server
 func DeleteBackupScript(config storages.Configuration, client FTPClient) error {
-	// Determine remote script path
-	remoteScriptPath := config.BackupScript
-	if remoteScriptPath == "" {
-		remoteScriptPath = "db_backup.php"
-	}
-
-	// Ensure remote path is relative to root directory
-	if !strings.HasPrefix(remoteScriptPath, "/") {
-		remoteScriptPath = filepath.Join(config.RootDirectory, remoteScriptPath)
-	}
+	// Use fixed script name in root directory
+	remoteScriptPath := filepath.Join(config.RootDirectory, "db_backup.php")
 
 	fmt.Printf("Deleting backup script from: %s\n", remoteScriptPath)
 
@@ -255,16 +237,8 @@ func DeleteBackupScript(config storages.Configuration, client FTPClient) error {
 
 // CheckBackupScriptExists checks if the backup script already exists on the server
 func CheckBackupScriptExists(config storages.Configuration, client FTPClient) (bool, error) {
-	// Determine remote script path
-	remoteScriptPath := config.BackupScript
-	if remoteScriptPath == "" {
-		remoteScriptPath = "db_backup.php"
-	}
-
-	// Ensure remote path is relative to root directory
-	if !strings.HasPrefix(remoteScriptPath, "/") {
-		remoteScriptPath = filepath.Join(config.RootDirectory, remoteScriptPath)
-	}
+	// Use fixed script name in root directory
+	remoteScriptPath := filepath.Join(config.RootDirectory, "db_backup.php")
 
 	// Try to get file info to check if it exists
 	_, err := client.HashFile(remoteScriptPath)
@@ -318,9 +292,7 @@ func ValidateDatabaseConfig(config storages.Configuration) error {
 		}
 	}
 
-	if config.BackupScript == "" {
-		return fmt.Errorf("backup script path is required")
-	}
+	// Script path is now fixed - no validation needed
 
 	return nil
 }
@@ -343,7 +315,7 @@ func GetDatabaseInfo(config storages.Configuration) string {
 		info.WriteString(fmt.Sprintf("  File: %s\n", config.DBDatabase))
 	}
 
-	info.WriteString(fmt.Sprintf("  Script: %s\n", config.BackupScript))
+	info.WriteString("  Script: db_backup.php (auto-uploaded)\n")
 
 	return info.String()
 }
