@@ -12,12 +12,18 @@ const сonfig = "config.json"
 
 type Configuration struct {
 	Name          string `msgpack:"name"`
+	Protocol      string `msgpack:"protocol"`
 	Port          string `msgpack:"port"`
 	Host          string `msgpack:"host"`
 	Login         string `msgpack:"login"`
 	Password      string `msgpack:"password"`
 	DBlogin       string `msgpack:"dblogin"`
 	DBpassword    string `msgpack:"dbpassword"`
+	DBType        string `msgpack:"dbtype"`       // mysql, postgresql, sqlite
+	DBHost        string `msgpack:"dbhost"`       // хост БД (обычно localhost)
+	DBPort        string `msgpack:"dbport"`       // порт БД
+	DBDatabase    string `msgpack:"dbdatabase"`   // имя БД
+	BackupScript  string `msgpack:"backupscript"` // путь к PHP скрипту на сервере
 	RootDirectory string `msgpack:"rootdirectory"`
 	SaveDirectory string `msgpack:"savedirectory"`
 }
@@ -61,18 +67,20 @@ func (c *Configuration) EditReceivedData(arguments []string) {
 	configFile := "sites/.config"
 
 	// check for the presence of a configuration with a given id
-	if id < 0 || id >= len(dataBin) {
+	if id < 0 || id > len(dataBin) {
 		fmt.Printf("configuration with id %d not found", id)
 		return
 	}
 
 	// we get a link to the required configuration
-	config := &dataBin[id]
+	config := &dataBin[id-1]
 
 	// check and change the value of the specified field
 	switch field {
 	case "name":
 		config.Name = newValue
+	case "protocol":
+		config.Protocol = newValue
 	case "port":
 		config.Port = newValue
 	case "host":
@@ -85,6 +93,16 @@ func (c *Configuration) EditReceivedData(arguments []string) {
 		config.DBlogin = newValue
 	case "dbpassword":
 		config.DBpassword = newValue
+	case "dbtype":
+		config.DBType = newValue
+	case "dbhost":
+		config.DBHost = newValue
+	case "dbport":
+		config.DBPort = newValue
+	case "dbdatabase":
+		config.DBDatabase = newValue
+	case "backupscript":
+		config.BackupScript = newValue
 	case "rootdirectory":
 		config.RootDirectory = newValue
 	case "savedirectory":

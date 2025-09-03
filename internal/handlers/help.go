@@ -14,6 +14,10 @@ In the next steps, you will be prompted to enter:
 	- password S/FTP;
 	- bd login;
 	- bd password;
+	- database type (mysql, postgresql, sqlite);
+	- database host and port;
+	- database name or SQLite file path;
+	- backup script path on the server;
 	- resource root directory;
 	- directory for saving the snapshot on the local machine;
 	- backup frequency in cron task syntax.

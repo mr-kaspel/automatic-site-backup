@@ -4,6 +4,10 @@
 
 ##### _Snapshot anything quickly and efficiently_
 
+```
+Incremental backups
+```
+
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/mr-kaspel/automatic-site-backup)
 ![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/mr-kaspel/automatic-site-backup)
 ![GitHub last commit](https://img.shields.io/github/last-commit/mr-kaspel/automatic-site-backup)
@@ -50,7 +54,7 @@ snp -h
 // add resource
 snp -a site.ru
 // edit resource data
-snp -e *project ID* *data field name* *new value*
+snp -e *project ID* *data field name* "*new value*"
 // list all resources
 snp -l
 // delete the specified resource
@@ -66,7 +70,7 @@ snp -ls *project ID*
 // request a specific project snapshot
 snp -gs *project ID* *snapshot ID*
 // request a file or an entire directory from a specific snapshot
-snp -gsf *project ID* *snapshot ID* *directory*
+snp -gsf *project ID* *snapshot ID* "*directory*"
 // compare two pictures
 snp -sc *project ID* *snapshot ID first* *snapshot ID second*
 ```
