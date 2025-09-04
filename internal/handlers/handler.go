@@ -2110,6 +2110,11 @@ func getCompleteFileSet(saveDir, archiveName string) (map[string]string, error) 
 					fileSet[filePath] = hash
 				}
 			}
+
+			// Удаляем файлы, которые были удалены в этом снимке
+			for _, filePath := range metadata.RemovedFiles {
+				delete(fileSet, filePath)
+			}
 		}
 	}
 
