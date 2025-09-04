@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,95 @@ import (
 	"github.com/mr-kaspel/automatic-site-backup.git/internal/utils"
 	"github.com/vmihailenco/msgpack/v5"
 )
+
+// Global cache for configurations
+var (
+	configCache     []storages.Configuration
+	configCacheTime time.Time
+	cacheMutex      sync.RWMutex
+	cacheTimeout    = 5 * time.Minute
+)
+
+// File cache for frequently accessed files
+var (
+	fileCache        = make(map[string]utils.RemoteFile)
+	fileCacheMutex   sync.RWMutex
+	fileCacheTimeout = 10 * time.Minute
+	fileCacheTime    = make(map[string]time.Time)
+)
+
+// getCachedConfigurations returns configurations with caching
+func getCachedConfigurations() []storages.Configuration {
+	cacheMutex.RLock()
+	// Check if cache is valid
+	if !configCacheTime.IsZero() && time.Since(configCacheTime) < cacheTimeout {
+		cacheMutex.RUnlock()
+		return configCache
+	}
+	cacheMutex.RUnlock()
+
+	// Cache is invalid or empty, reload
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	// Double-check after acquiring write lock
+	if !configCacheTime.IsZero() && time.Since(configCacheTime) < cacheTimeout {
+		return configCache
+	}
+
+	// Load fresh data
+	var data storages.Configuration
+	configCache = data.GetFileConfiguration()
+	configCacheTime = time.Now()
+
+	return configCache
+}
+
+// invalidateConfigCache clears the configuration cache
+func invalidateConfigCache() {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+	configCache = nil
+	configCacheTime = time.Time{}
+}
+
+// getCachedFileInfo retrieves file info from cache if available
+func getCachedFileInfo(filePath string) (utils.RemoteFile, bool) {
+	fileCacheMutex.RLock()
+	defer fileCacheMutex.RUnlock()
+
+	file, exists := fileCache[filePath]
+	if !exists {
+		return utils.RemoteFile{}, false
+	}
+
+	// Check if cache entry is still valid
+	if cacheTime, exists := fileCacheTime[filePath]; exists {
+		if time.Since(cacheTime) > fileCacheTimeout {
+			return utils.RemoteFile{}, false
+		}
+	}
+
+	return file, true
+}
+
+// setCachedFileInfo stores file info in cache
+func setCachedFileInfo(filePath string, file utils.RemoteFile) {
+	fileCacheMutex.Lock()
+	defer fileCacheMutex.Unlock()
+
+	fileCache[filePath] = file
+	fileCacheTime[filePath] = time.Now()
+}
+
+// clearFileCache clears the file cache
+func clearFileCache() {
+	fileCacheMutex.Lock()
+	defer fileCacheMutex.Unlock()
+
+	fileCache = make(map[string]utils.RemoteFile)
+	fileCacheTime = make(map[string]time.Time)
+}
 
 var cmd = map[string]interface{}{
 	"h": help,
@@ -83,6 +173,7 @@ type SnapshotMetadata struct {
 	Timestamp      time.Time         `msgpack:"timestamp"`
 	SnapshotType   string            `msgpack:"type"` // "full" or "incremental"
 	ChangedFiles   []string          `msgpack:"changed_files"`
+	RemovedFiles   []string          `msgpack:"removed_files"`   // files that were removed in this snapshot
 	ParentSnapshot string            `msgpack:"parent_snapshot"` // filename of parent snapshot (empty for full snapshots)
 	FileHashes     map[string]string `msgpack:"file_hashes"`
 	TotalFiles     int               `msgpack:"total_files"`
@@ -153,13 +244,16 @@ func add(arguments []string) {
 	}
 
 	// reading current configurations from a file
-	var existingConfigs = data.GetFileConfiguration()
+	var existingConfigs = getCachedConfigurations()
 
 	// adding a new configuration
 	existingConfigs = append(existingConfigs, newConfig)
 
 	// save all configurations
 	data.SaveConfigurations(existingConfigs)
+
+	// invalidate cache after modification
+	invalidateConfigCache()
 }
 
 func edit(arguments []string) {
@@ -172,16 +266,24 @@ func edit(arguments []string) {
 
 	var data storages.Configuration
 	data.EditReceivedData(arguments)
+
+	// invalidate cache after modification
+	invalidateConfigCache()
 }
 
 func configurationDataOutput(arguments []string) {
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	dataBin := getCachedConfigurations()
+
+	// Check if there are any configurations
+	if len(dataBin) == 0 {
+		fmt.Println("No configurations found.")
+		return
+	}
 
 	// output each configuration on a new line
 	for i, config := range dataBin {
 		fmt.Printf("\033[38;2;31;111;235m Configuration %d:\033[0m\n", i+1)
-		fmt.Printf("\tName: %s\r\n\tProtocol: %s\r\n\tPort: %s\r\n\tHost: %s\r\n\tLogin: %s\r\n\tPassword: %s\r\n\tDB Login: %s\r\n\tDB Password: %s\r\n\tDB Type: %s\r\n\tDB Host: %s\r\n\tDB Port: %s\r\n\tDB Database: %s\r\n\tRoot Directory: <%s>\r\n\tSave Directory: <%s>\r\n\tMax Threads: %s\n",
+		fmt.Printf("\tName: %s\n\tProtocol: %s\n\tPort: %s\n\tHost: %s\n\tLogin: %s\n\tPassword: %s\n\tDB Login: %s\n\tDB Password: %s\n\tDB Type: %s\n\tDB Host: %s\n\tDB Port: %s\n\tDB Database: %s\n\tRoot Directory: <%s>\n\tSave Directory: <%s>\n\tMax Threads: %s\n",
 			config.Name, config.Protocol, config.Port, config.Host, config.Login, config.Password, config.DBlogin, config.DBpassword, config.DBType, config.DBHost, config.DBPort, config.DBDatabase, config.RootDirectory, config.SaveDirectory, config.MaxThreads)
 		fmt.Println() // empty line to separate configurations
 	}
@@ -202,11 +304,10 @@ func delet(arguments []string) {
 		return
 	}
 
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	dataBin := getCachedConfigurations()
 
 	// check for the presence of a configuration with a given id
-	if id < 0 || id > len(dataBin) {
+	if id < 0 || id >= len(dataBin) {
 		fmt.Printf("Configuration with id %d not found\n", id)
 		return
 	}
@@ -227,7 +328,11 @@ func delet(arguments []string) {
 	dataBin = append(dataBin[:id], dataBin[id+1:]...)
 
 	// saving data
+	var data storages.Configuration
 	data.SaveConfigurations(dataBin)
+
+	// invalidate cache after modification
+	invalidateConfigCache()
 
 	fmt.Println("Configuration deleted successfully.")
 }
@@ -241,8 +346,7 @@ func settings(arguments []string) {
 		return
 	}
 
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	var dataBin = getCachedConfigurations()
 
 	// search configuration by ID
 	if id < 0 || id > len(dataBin) {
@@ -268,8 +372,7 @@ func snapshot(arguments []string) {
 	}
 
 	// reading configurations
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	var dataBin = getCachedConfigurations()
 
 	// search configuration by ID
 	if id < 0 || id > len(dataBin) {
@@ -278,71 +381,87 @@ func snapshot(arguments []string) {
 	}
 
 	config := dataBin[id-1]
+	fmt.Printf("Project: %s\n", config.Name)
+	fmt.Printf("Protocol: %s\n", config.Protocol)
+	fmt.Printf("Host: %s:%s\n", config.Host, config.Port)
+	fmt.Printf("Login: %s\n", config.Login)
+	fmt.Printf("Root Directory: %s\n", config.RootDirectory)
+
 	saveDir := config.SaveDirectory
 	if saveDir == "" {
 		fmt.Println("Save directory is not specified in the configuration.")
 		return
 	}
 
-	// create a path to the hash file for a specific project
-	hashFilePath := filepath.Join(saveDir, fmt.Sprintf(".filehashes_%s", config.Name))
-	fileHashes := make(map[string]string)
+	// Load existing hashes from the latest snapshot metadata
+	fileHashes := loadLatestSnapshotHashes(saveDir)
 
 	// preparing a client connection (FTP/SFTP)
+	fmt.Printf("Connecting to %s server...\n", config.Protocol)
 	var client utils.FTPClient // interface for working with FTP/SFTP
 	if config.Protocol == "FTP" {
 		client, err = utils.NewFTPClient(config.Host, config.Login, config.Password, config.Port)
 		if err != nil {
-			fmt.Println("Invalid FTP:", err)
+			fmt.Printf("Failed to connect to FTP server: %v\n", err)
 			return
 		}
+		fmt.Println("FTP connection established successfully")
 	} else if config.Protocol == "SFTP" {
 		client, err = utils.NewSFTPClient(config.Host, config.Login, config.Password, config.Port)
 		if err != nil {
-			fmt.Println("Invalid SFTP:", err)
+			fmt.Printf("Failed to connect to SFTP server: %v\n", err)
 			return
 		}
+		fmt.Println("SFTP connection established successfully")
 	} else {
 		fmt.Println("Unsupported protocol for connection.")
 		return
 	}
 	defer client.Close()
 
-	// reading existing hashes
-	if _, err := os.Stat(hashFilePath); err == nil {
-		hashData, err := os.ReadFile(hashFilePath)
-		if err == nil {
-			_ = msgpack.Unmarshal(hashData, &fileHashes)
-		}
-	}
+	// Trim whitespace and check if root directory is empty
+	config.RootDirectory = strings.TrimSpace(config.RootDirectory)
 
 	if config.RootDirectory == "" {
-		currentDir, _ := client.CurrentDir()
+		fmt.Println("Root directory not specified, getting current directory...")
+		currentDir, err := client.CurrentDir()
+		if err != nil {
+			fmt.Printf("Failed to get current directory: %v\n", err)
+			return
+		}
 		config.RootDirectory = currentDir
+		fmt.Printf("Using current directory: %s\n", config.RootDirectory)
+	} else {
+		fmt.Printf("Using specified root directory: %s\n", config.RootDirectory)
 	}
 
 	// getting a list of files from the server
 	files, err := client.ListFiles(config.RootDirectory)
 	if err != nil {
-		fmt.Println("Failed to list files on the server:", err)
+		fmt.Printf("Failed to list files on the server in directory '%s': %v\n", config.RootDirectory, err)
 		return
 	}
 
-	// Get max threads for parallel processing
-	maxThreads := utils.GetMaxThreads(config.MaxThreads)
-	fmt.Printf("Using %d threads for parallel processing\n", maxThreads)
+	// Get adaptive max threads for parallel processing
+	maxThreads := getAdaptiveThreads(config.MaxThreads, len(files))
+	fmt.Printf("Using %d threads for parallel processing (%d files)\n", maxThreads, len(files))
 
 	// list for updated hashes and files to download
 	updatedHashes := make(map[string]string)
 	filesToDownload := []string{}
+	removedFiles := []string{}
 
-	// Calculate hashes in parallel
+	// Calculate hashes in parallel with batching for large file sets
 	fmt.Printf("Calculating hashes for %d files using %d threads...\n", len(files), maxThreads)
-	hashResults := calculateHashesParallel(client, files, config.RootDirectory, maxThreads)
+	hashResults := calculateHashesInBatches(client, files, config.RootDirectory, maxThreads)
 
 	// Process hash results and determine files to download
 	for _, result := range hashResults {
 		if result.Error != nil {
+			// Skip directories that can't be hashed (they don't need hashes)
+			if result.Task.File.IsDir {
+				continue
+			}
 			fmt.Printf("Failed to calculate hash for file %s: %v\n", result.Task.FilePath, result.Error)
 			continue
 		}
@@ -360,54 +479,7 @@ func snapshot(arguments []string) {
 	for path := range fileHashes {
 		if _, exists := updatedHashes[path]; !exists {
 			fmt.Printf("File %s has been removed from the server.\n", path)
-		}
-	}
-
-	// downloading modified files with parallel processing
-	if len(filesToDownload) > 0 {
-		fmt.Printf("Downloading %d modified files using %d threads...\n", len(filesToDownload), maxThreads)
-
-		// Create download tasks
-		tasks := make([]DownloadTask, len(filesToDownload))
-		for i, filePath := range filesToDownload {
-			localFilePath := filepath.Join(saveDir, filepath.Base(filePath))
-			tasks[i] = DownloadTask{
-				RemotePath: filePath,
-				LocalPath:  localFilePath,
-				Index:      i + 1,
-				Total:      len(filesToDownload),
-			}
-		}
-
-		// Execute parallel downloads
-		downloadFilesParallel(client, tasks, maxThreads)
-	} else {
-		fmt.Println("No files to download - all files are up to date")
-	}
-
-	// updating the hash file
-	hashData, err := msgpack.Marshal(updatedHashes)
-	if err == nil {
-		err = os.WriteFile(hashFilePath, hashData, 0644)
-		if err != nil {
-			fmt.Println("Failed to update hash file:", err)
-		}
-	}
-
-	// Database backup logic
-	if config.DBType != "" {
-		fmt.Println("Starting database backup...")
-
-		// Validate database configuration
-		err = utils.ValidateDatabaseConfig(config)
-		if err != nil {
-			fmt.Printf("Database configuration error: %v\n", err)
-		} else {
-			// Perform database backup (script upload/delete is handled internally)
-			err = utils.BackupDatabase(config, client)
-			if err != nil {
-				fmt.Printf("Database backup failed: %v\n", err)
-			}
+			removedFiles = append(removedFiles, path)
 		}
 	}
 
@@ -441,13 +513,93 @@ func snapshot(arguments []string) {
 		}
 	}
 
+	// downloading files with parallel processing
+	if snapshotType == "full" {
+		// For full snapshots, download ALL files
+		fmt.Printf("Downloading ALL %d files for full snapshot using %d threads...\n", len(files), maxThreads)
+
+		// Create download tasks for all files
+		tasks := make([]DownloadTask, len(files))
+		for i, file := range files {
+			// Skip directories
+			if file.IsDir {
+				continue
+			}
+
+			// Preserve directory structure by using the full path
+			// Remove root directory prefix from filePath to avoid nested directories in archive
+			localPath := file.Name
+			if strings.HasPrefix(file.Name, config.RootDirectory) {
+				localPath = strings.TrimPrefix(file.Name, config.RootDirectory)
+				localPath = strings.TrimPrefix(localPath, "/")
+			}
+			localFilePath := filepath.Join(saveDir, "temp", localPath)
+			tasks[i] = DownloadTask{
+				RemotePath: file.Name,
+				LocalPath:  localFilePath,
+				Index:      i + 1,
+				Total:      len(files),
+			}
+		}
+
+		// Execute parallel downloads
+		downloadFilesParallel(client, tasks, maxThreads)
+	} else if len(filesToDownload) > 0 {
+		// For incremental snapshots, download only changed files
+		fmt.Printf("Downloading %d modified files using %d threads...\n", len(filesToDownload), maxThreads)
+
+		// Create download tasks
+		tasks := make([]DownloadTask, len(filesToDownload))
+		for i, filePath := range filesToDownload {
+			// Preserve directory structure by using the full path
+			// Remove root directory prefix from filePath to avoid nested directories in archive
+			localPath := filePath
+			if strings.HasPrefix(filePath, config.RootDirectory) {
+				localPath = strings.TrimPrefix(filePath, config.RootDirectory)
+				localPath = strings.TrimPrefix(localPath, "/")
+			}
+			localFilePath := filepath.Join(saveDir, "temp", localPath)
+			tasks[i] = DownloadTask{
+				RemotePath: filePath,
+				LocalPath:  localFilePath,
+				Index:      i + 1,
+				Total:      len(filesToDownload),
+			}
+		}
+
+		// Execute parallel downloads
+		downloadFilesParallel(client, tasks, maxThreads)
+	} else {
+		fmt.Println("No files to download - all files are up to date")
+	}
+
+	// Hash file is now saved as part of snapshot metadata, no need to save separately
+
+	// Database backup logic
+	if config.DBType != "" {
+		fmt.Println("Starting database backup...")
+
+		// Validate database configuration
+		err = utils.ValidateDatabaseConfig(config)
+		if err != nil {
+			fmt.Printf("Database configuration error: %v\n", err)
+		} else {
+			// Perform database backup (script upload/delete is handled internally)
+			err = utils.BackupDatabase(config, client)
+			if err != nil {
+				fmt.Printf("Database backup failed: %v\n", err)
+			}
+		}
+	}
+
 	// Create archive with only changed files for incremental snapshots
 	archiveName := fmt.Sprintf("backup_%s.tar.gz", time.Now().Format("20060102_150405"))
 	archivePath := filepath.Join(saveDir, archiveName)
 
 	if snapshotType == "full" {
-		// Full snapshot: archive all files in saveDir
-		err = utils.CreateTarGz(archivePath, saveDir)
+		// Full snapshot: archive all files in the downloaded directory
+		// Create archive with proper path structure
+		err = createFullSnapshotArchive(archivePath, saveDir)
 	} else {
 		// Incremental snapshot: archive only changed files
 		err = createIncrementalArchive(archivePath, saveDir, filesToDownload)
@@ -456,6 +608,11 @@ func snapshot(arguments []string) {
 	if err != nil {
 		fmt.Println("Failed to create archive:", err)
 		return
+	}
+
+	// Clean up temporary files after successful archive creation
+	if len(filesToDownload) > 0 {
+		cleanupTempFiles(saveDir, filesToDownload)
 	}
 
 	// Get archive size
@@ -470,6 +627,7 @@ func snapshot(arguments []string) {
 		Timestamp:      time.Now(),
 		SnapshotType:   snapshotType,
 		ChangedFiles:   filesToDownload,
+		RemovedFiles:   removedFiles,
 		ParentSnapshot: parentSnapshot,
 		FileHashes:     updatedHashes,
 		TotalFiles:     len(updatedHashes),
@@ -486,8 +644,7 @@ func snapshot(arguments []string) {
 }
 
 func snapshotAll(arguments []string) {
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	var dataBin = getCachedConfigurations()
 
 	if len(dataBin) == 0 {
 		fmt.Println("No projects found. Add a project first using 'snp -a <domain>'")
@@ -527,8 +684,7 @@ func listSnapshot(arguments []string) {
 	}
 
 	// Получаем конфигурации
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	var dataBin = getCachedConfigurations()
 
 	// Проверяем существование проекта
 	if id < 1 || id > len(dataBin) {
@@ -639,8 +795,7 @@ func getSnapshot(arguments []string) {
 	}
 
 	// Получаем конфигурации
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	var dataBin = getCachedConfigurations()
 
 	// Проверяем существование проекта
 	if projectID < 1 || projectID > len(dataBin) {
@@ -707,7 +862,7 @@ func getSnapshot(arguments []string) {
 		}
 	} else {
 		// Extract using incremental logic
-		err = extractIncrementalSnapshot(saveDir, selectedArchive, extractDir, metadata)
+		err = extractIncrementalSnapshot(saveDir, selectedArchive, extractDir, metadata, config.RootDirectory)
 		if err != nil {
 			fmt.Printf("Failed to extract incremental snapshot: %v\n", err)
 			os.RemoveAll(extractDir)
@@ -769,8 +924,7 @@ func getSnapshotFiles(arguments []string) {
 	targetPath := arguments[2]
 
 	// Получаем конфигурации
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	var dataBin = getCachedConfigurations()
 
 	// Проверяем существование проекта
 	if projectID < 1 || projectID > len(dataBin) {
@@ -826,7 +980,7 @@ func getSnapshotFiles(arguments []string) {
 		archivePath := filepath.Join(saveDir, archiveName)
 
 		// Проверяем, есть ли файл в этом архиве
-		if fileExistsInArchive(archivePath, targetPath) {
+		if fileExistsInArchive(archivePath, targetPath, config.RootDirectory) {
 			foundArchive = archiveName
 			fmt.Printf("Found '%s' in archive: %s\n", targetPath, archiveName)
 			break
@@ -850,7 +1004,7 @@ func getSnapshotFiles(arguments []string) {
 
 	// Извлекаем файл из найденного архива
 	archivePath := filepath.Join(saveDir, foundArchive)
-	err = extractFileFromArchive(archivePath, targetPath, tempDir)
+	err = extractFileFromArchive(archivePath, targetPath, tempDir, config.RootDirectory)
 	if err != nil {
 		fmt.Printf("Failed to extract file from archive: %v\n", err)
 		os.RemoveAll(tempDir)
@@ -1058,22 +1212,117 @@ func downloadWorker(client utils.FTPClient, taskChan <-chan DownloadTask, result
 	}
 }
 
+// calculateHashesInBatches calculates file hashes using batching for memory efficiency
+func calculateHashesInBatches(client utils.FTPClient, files []utils.RemoteFile, rootDir string, maxThreads int) []HashResult {
+	if len(files) == 0 {
+		return []HashResult{}
+	}
+
+	// Determine optimal batch size based on file count
+	batchSize := getOptimalBatchSize(len(files))
+	fmt.Printf("Processing %d files in batches of %d\n", len(files), batchSize)
+
+	var allResults []HashResult
+
+	// Process files in batches
+	for i := 0; i < len(files); i += batchSize {
+		end := i + batchSize
+		if end > len(files) {
+			end = len(files)
+		}
+
+		batch := files[i:end]
+		fmt.Printf("Processing batch %d-%d of %d files...\n", i+1, end, len(files))
+
+		// Process current batch
+		batchResults := calculateHashesParallel(client, batch, rootDir, maxThreads)
+		allResults = append(allResults, batchResults...)
+
+		// Force garbage collection between batches for large file sets
+		if len(files) > 10000 {
+			runtime.GC()
+		}
+	}
+
+	return allResults
+}
+
+// getOptimalBatchSize determines the best batch size based on file count
+func getOptimalBatchSize(fileCount int) int {
+	if fileCount < 1000 {
+		return fileCount // Process all at once for small sets
+	} else if fileCount < 10000 {
+		return 1000
+	} else if fileCount < 100000 {
+		return 5000
+	} else {
+		return 10000 // Cap at 10k for very large sets
+	}
+}
+
+// getAdaptiveThreads determines optimal thread count based on file count and system resources
+func getAdaptiveThreads(configThreads string, fileCount int) int {
+	// Parse configured threads
+	configured := utils.GetMaxThreads(configThreads)
+
+	// Adaptive logic based on file count
+	if fileCount < 100 {
+		return min(configured, 2) // Don't over-thread for small sets
+	} else if fileCount < 1000 {
+		return min(configured, 4)
+	} else if fileCount < 10000 {
+		return min(configured, 8)
+	} else if fileCount < 100000 {
+		return min(configured, 16)
+	} else {
+		// For very large sets, use more threads but cap at system limits
+		maxThreads := min(configured, runtime.NumCPU()*4)
+		return min(maxThreads, 32) // Cap at 32 threads
+	}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // calculateHashesParallel calculates file hashes using multiple goroutines
 func calculateHashesParallel(client utils.FTPClient, files []utils.RemoteFile, rootDir string, maxThreads int) []HashResult {
 	if len(files) == 0 {
 		return []HashResult{}
 	}
 
-	// Create hash tasks
-	tasks := make([]HashTask, len(files))
-	for i, file := range files {
-		filePath := filepath.Join(rootDir, file.Name)
-		tasks[i] = HashTask{
+	// Create hash tasks (only for files, not directories)
+	var tasks []HashTask
+	taskIndex := 0
+
+	for _, file := range files {
+		// Skip directories - they don't need hashes
+		if file.IsDir {
+			continue
+		}
+
+		// If file.Name already contains the full path, use it as is
+		// Otherwise, join with rootDir
+		var filePath string
+		if strings.HasPrefix(file.Name, "/") {
+			filePath = file.Name
+		} else {
+			filePath = filepath.Join(rootDir, file.Name)
+		}
+		// Convert to forward slashes for consistency
+		filePath = filepath.ToSlash(filePath)
+
+		tasks = append(tasks, HashTask{
 			File:     file,
 			FilePath: filePath,
-			Index:    i + 1,
+			Index:    taskIndex + 1,
 			Total:    len(files),
-		}
+		})
+		taskIndex++
 	}
 
 	// Create channels for tasks and results
@@ -1127,7 +1376,7 @@ func hashWorker(client utils.FTPClient, taskChan <-chan HashTask, resultChan cha
 }
 
 // extractIncrementalSnapshot extracts a snapshot by building the complete file set from the chain
-func extractIncrementalSnapshot(saveDir, archiveName, extractDir string, metadata *SnapshotMetadata) error {
+func extractIncrementalSnapshot(saveDir, archiveName, extractDir string, metadata *SnapshotMetadata, rootDirectory string) error {
 	// Build the snapshot chain
 	chain, err := buildSnapshotChain(saveDir, archiveName)
 	if err != nil {
@@ -1136,38 +1385,191 @@ func extractIncrementalSnapshot(saveDir, archiveName, extractDir string, metadat
 
 	fmt.Printf("Snapshot chain: %v\n", chain)
 
-	// Create a map to track files and their versions
-	fileVersions := make(map[string]string) // filepath -> archive name
-
-	// Process each snapshot in the chain
+	// Step 1: Extract all files from the full snapshot (if it exists) to root/ directory
 	for _, snapshotName := range chain {
 		snapshotMetadata, err := loadSnapshotMetadata(saveDir, snapshotName)
 		if err != nil {
 			return fmt.Errorf("failed to load metadata for %s: %v", snapshotName, err)
 		}
 
-		// Update file versions with files from this snapshot
-		for _, filePath := range snapshotMetadata.ChangedFiles {
-			fileVersions[filePath] = snapshotName
+		if snapshotMetadata.SnapshotType == "full" {
+			archivePath := filepath.Join(saveDir, snapshotName)
+			fmt.Printf("Extracting ALL files from full snapshot: %s\n", snapshotName)
+
+			// Extract all files from the full snapshot directly to extractDir
+			err = extractAllFilesFromArchive(archivePath, extractDir)
+			if err != nil {
+				return fmt.Errorf("failed to extract full snapshot: %v", err)
+			}
+			break // Only process the first (oldest) full snapshot
 		}
 	}
 
-	// Extract files from their respective archives
-	for filePath, archiveName := range fileVersions {
-		archivePath := filepath.Join(saveDir, archiveName)
-
-		// Extract this specific file from the archive
-		err := extractFileFromArchive(archivePath, filePath, extractDir)
+	// Step 2: Apply incremental changes sequentially (from oldest to newest)
+	for _, snapshotName := range chain {
+		snapshotMetadata, err := loadSnapshotMetadata(saveDir, snapshotName)
 		if err != nil {
-			fmt.Printf("Warning: failed to extract %s from %s: %v\n", filePath, archiveName, err)
+			return fmt.Errorf("failed to load metadata for %s: %v", snapshotName, err)
+		}
+
+		if snapshotMetadata.SnapshotType == "incremental" {
+			archivePath := filepath.Join(saveDir, snapshotName)
+			fmt.Printf("Applying incremental changes from: %s (%d changed files, %d removed files)\n",
+				snapshotName, len(snapshotMetadata.ChangedFiles), len(snapshotMetadata.RemovedFiles))
+
+			// Extract only changed files from this incremental snapshot
+			for _, filePath := range snapshotMetadata.ChangedFiles {
+				err := extractFileFromArchive(archivePath, filePath, extractDir, rootDirectory)
+				if err != nil {
+					// Try to find the file in earlier snapshots in the chain
+					found := false
+					for _, earlierSnapshot := range chain {
+						if earlierSnapshot == snapshotName {
+							break // Stop at current snapshot
+						}
+						earlierArchivePath := filepath.Join(saveDir, earlierSnapshot)
+						err2 := extractFileFromArchive(earlierArchivePath, filePath, extractDir, rootDirectory)
+						if err2 == nil {
+							found = true
+							break
+						}
+					}
+					if !found {
+						fmt.Printf("Warning: failed to extract %s from any snapshot in chain: %v\n", filePath, err)
+					}
+				}
+			}
+
+			// Remove files that were deleted in this incremental snapshot
+			for _, filePath := range snapshotMetadata.RemovedFiles {
+				// Convert file path to local path
+				localPath := filePath
+				if strings.HasPrefix(filePath, rootDirectory) {
+					localPath = strings.TrimPrefix(filePath, rootDirectory)
+					localPath = strings.TrimPrefix(localPath, "/")
+				}
+				targetPath := filepath.Join(extractDir, localPath)
+
+				// Remove the file if it exists
+				if _, err := os.Stat(targetPath); err == nil {
+					err := os.Remove(targetPath)
+					if err != nil {
+						fmt.Printf("Warning: failed to remove deleted file %s: %v\n", targetPath, err)
+					} else {
+						fmt.Printf("Removed deleted file: %s\n", targetPath)
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Printf("Successfully extracted snapshot to: %s\n", extractDir)
+	return nil
+}
+
+// extractAllFilesFromArchive extracts all files from a tar.gz archive
+func extractAllFilesFromArchive(archivePath, extractDir string) error {
+	// Open archive
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Create gzip reader
+	gzr, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+
+	// Create tar reader
+	tr := tar.NewReader(gzr)
+
+	// Extract all files
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// Skip directories (they will be created automatically)
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+
+		// Create target path preserving directory structure
+		// Files in archive are stored with relative paths, extract them directly
+		targetPath := header.Name
+		target := filepath.Join(extractDir, targetPath)
+
+		// Create directory if needed
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+
+		// Create file
+		outFile, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+
+		// Copy file content
+		_, err = io.Copy(outFile, tr)
+		outFile.Close()
+		if err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
+// listFilesInArchive lists all files in a tar.gz archive
+func listFilesInArchive(archivePath string) ([]string, error) {
+	var files []string
+
+	// Open archive
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// Create gzip reader
+	gzr, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer gzr.Close()
+
+	// Create tar reader
+	tr := tar.NewReader(gzr)
+
+	// List all files
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Add file to list (skip directories)
+		if header.Typeflag != tar.TypeDir {
+			files = append(files, header.Name)
+		}
+	}
+
+	return files, nil
+}
+
 // fileExistsInArchive checks if a file exists in a tar.gz archive
-func fileExistsInArchive(archivePath, filePath string) bool {
+func fileExistsInArchive(archivePath, filePath, rootDirectory string) bool {
 	// Open archive
 	file, err := os.Open(archivePath)
 	if err != nil {
@@ -1196,7 +1598,15 @@ func fileExistsInArchive(archivePath, filePath string) bool {
 		}
 
 		// Check if this is the file we're looking for
-		if header.Name == filepath.Base(filePath) {
+		// Files in metadata have root directory prefix, but in archive they are stored without it
+		expectedPath := filePath
+		if strings.HasPrefix(filePath, rootDirectory) {
+			expectedPath = strings.TrimPrefix(filePath, rootDirectory)
+			expectedPath = strings.TrimPrefix(expectedPath, "/")
+		}
+
+		// Check if header name matches the expected path
+		if header.Name == expectedPath {
 			return true
 		}
 	}
@@ -1205,7 +1615,7 @@ func fileExistsInArchive(archivePath, filePath string) bool {
 }
 
 // extractFileFromArchive extracts a specific file from a tar.gz archive
-func extractFileFromArchive(archivePath, filePath, extractDir string) error {
+func extractFileFromArchive(archivePath, filePath, extractDir, rootDirectory string) error {
 	// Open archive
 	file, err := os.Open(archivePath)
 	if err != nil {
@@ -1234,9 +1644,26 @@ func extractFileFromArchive(archivePath, filePath, extractDir string) error {
 		}
 
 		// Check if this is the file we're looking for
-		if header.Name == filepath.Base(filePath) {
-			// Create target path
-			target := filepath.Join(extractDir, header.Name)
+		// Files in metadata have root directory prefix, but in archive they are stored without it
+		expectedPath := filePath
+		if strings.HasPrefix(filePath, rootDirectory) {
+			expectedPath = strings.TrimPrefix(filePath, rootDirectory)
+			expectedPath = strings.TrimPrefix(expectedPath, "/")
+		}
+
+		// Check if header name matches the expected path
+		matched := header.Name == expectedPath
+
+		if matched {
+			// Create target path preserving directory structure
+			// Files in metadata have root directory prefix, but in archive they are stored without it
+			// Extract directly to the path without adding root directory prefix
+			targetPath := filePath
+			if strings.HasPrefix(filePath, rootDirectory) {
+				targetPath = strings.TrimPrefix(filePath, rootDirectory)
+				targetPath = strings.TrimPrefix(targetPath, "/")
+			}
+			target := filepath.Join(extractDir, targetPath)
 
 			// Create directory if needed
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
@@ -1259,6 +1686,151 @@ func extractFileFromArchive(archivePath, filePath, extractDir string) error {
 	return fmt.Errorf("file %s not found in archive", filePath)
 }
 
+// convertToArchivePath converts full file path to archive format
+func convertToArchivePath(filePath, rootDirectory string) string {
+	// Try different path formats that might be used in archives
+	// 1. Original path (for full snapshots)
+	// 2. Path without /root/ prefix
+	// 3. Windows-style path
+
+	variants := []string{
+		filePath, // Original path
+	}
+
+	// If path starts with root directory, try without it
+	if strings.HasPrefix(filePath, rootDirectory) {
+		withoutRoot := strings.TrimPrefix(filePath, rootDirectory)
+		withoutRoot = strings.TrimPrefix(withoutRoot, "/")
+		variants = append(variants, withoutRoot)
+		variants = append(variants, strings.ReplaceAll(withoutRoot, "/", "\\"))
+	}
+
+	// Try with different root prefixes
+	if strings.HasPrefix(filePath, "/") {
+		variants = append(variants, strings.TrimPrefix(filePath, "/"))
+	}
+
+	// Return the first variant (original) - the extraction function will try all variants
+	return variants[0]
+}
+
+// loadLatestSnapshotHashes loads file hashes from the latest snapshot metadata
+func loadLatestSnapshotHashes(saveDir string) map[string]string {
+	fileHashes := make(map[string]string)
+
+	// Find the latest snapshot archive file
+	files, err := filepath.Glob(filepath.Join(saveDir, "backup_*.tar.gz"))
+	if err != nil || len(files) == 0 {
+		return fileHashes // Return empty map if no snapshots found
+	}
+
+	// Sort files by modification time to get the latest
+	latestFile := files[0]
+	for _, file := range files[1:] {
+		info1, _ := os.Stat(latestFile)
+		info2, _ := os.Stat(file)
+		if info2.ModTime().After(info1.ModTime()) {
+			latestFile = file
+		}
+	}
+
+	// Load metadata from the latest snapshot
+	archiveName := filepath.Base(latestFile)
+	metadata, err := loadSnapshotMetadata(saveDir, archiveName)
+	if err != nil {
+		fmt.Printf("Warning: Failed to load latest snapshot metadata: %v\n", err)
+		return fileHashes
+	}
+
+	return metadata.FileHashes
+}
+
+// cleanupTempFiles removes temporary downloaded files after archive creation
+func cleanupTempFiles(saveDir string, filePaths []string) {
+	// For full snapshots, remove the entire temp directory
+	tempDir := filepath.Join(saveDir, "temp")
+	if _, err := os.Stat(tempDir); err == nil {
+		os.RemoveAll(tempDir) // Remove entire temp directory
+		return
+	}
+
+	// For incremental snapshots, remove individual files
+	for _, filePath := range filePaths {
+		localFilePath := filepath.Join(saveDir, filePath)
+		if err := os.Remove(localFilePath); err != nil {
+			// Don't print error for individual file removal failures
+			continue
+		}
+	}
+
+	// Remove empty directories (optional - can be left for next backup)
+	// This is a simple implementation that removes directories in reverse order
+	for i := len(filePaths) - 1; i >= 0; i-- {
+		dirPath := filepath.Dir(filepath.Join(saveDir, filePaths[i]))
+		if dirPath != saveDir {
+			os.Remove(dirPath) // Remove empty directory (ignoring errors)
+		}
+	}
+}
+
+// createFullSnapshotArchive creates an archive containing all files with proper path structure
+func createFullSnapshotArchive(archivePath, saveDir string) error {
+	outFile, err := os.Create(archivePath)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	gw := gzip.NewWriter(outFile)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	downloadedDir := filepath.Join(saveDir, "temp")
+
+	// Walk through all files in the downloaded directory
+	err = filepath.Walk(downloadedDir, func(file string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if fi.IsDir() {
+			return nil
+		}
+
+		// Create relative path from the downloaded directory
+		relPath, err := filepath.Rel(downloadedDir, file)
+		if err != nil {
+			return err
+		}
+
+		// Convert to forward slashes - files should be stored with relative paths from the root directory
+		// No need to add /root/ prefix since Root Directory is already /root
+		archivePath := filepath.ToSlash(relPath)
+
+		header, err := tar.FileInfoHeader(fi, archivePath)
+		if err != nil {
+			return err
+		}
+		header.Name = archivePath
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		f, err := os.Open(file)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		_, err = io.Copy(tw, f)
+		return err
+	})
+
+	return err
+}
+
 // createIncrementalArchive creates an archive containing only the changed files
 func createIncrementalArchive(archivePath, saveDir string, changedFiles []string) error {
 	outFile, err := os.Create(archivePath)
@@ -1274,8 +1846,13 @@ func createIncrementalArchive(archivePath, saveDir string, changedFiles []string
 	defer tw.Close()
 
 	for _, filePath := range changedFiles {
-		// Get the local file path
-		localFilePath := filepath.Join(saveDir, filepath.Base(filePath))
+		// Get the local file path (preserve directory structure)
+		// Remove root directory prefix from filePath
+		localPath := filePath
+		if strings.HasPrefix(filePath, "/root/") {
+			localPath = strings.TrimPrefix(filePath, "/root/")
+		}
+		localFilePath := filepath.Join(saveDir, "temp", localPath)
 
 		// Check if file exists locally
 		if _, err := os.Stat(localFilePath); os.IsNotExist(err) {
@@ -1288,12 +1865,14 @@ func createIncrementalArchive(archivePath, saveDir string, changedFiles []string
 			continue
 		}
 
-		// Create tar header
-		header, err := tar.FileInfoHeader(fileInfo, filepath.Base(filePath))
+		// Create tar header with relative path (without root directory prefix)
+		archivePath := localPath
+		header, err := tar.FileInfoHeader(fileInfo, archivePath)
 		if err != nil {
 			continue
 		}
-		header.Name = filepath.Base(filePath)
+		// Use the relative path as the archive entry name (without root directory prefix)
+		header.Name = archivePath
 
 		// Write header
 		if err := tw.WriteHeader(header); err != nil {
@@ -1432,8 +2011,7 @@ func SnapshotComparison(arguments []string) {
 	}
 
 	// Получаем конфигурации
-	var data storages.Configuration
-	var dataBin = data.GetFileConfiguration()
+	var dataBin = getCachedConfigurations()
 
 	// Проверяем существование проекта
 	if projectID < 1 || projectID > len(dataBin) {
@@ -1518,9 +2096,20 @@ func getCompleteFileSet(saveDir, archiveName string) (map[string]string, error) 
 			return nil, fmt.Errorf("failed to load metadata for %s: %v", snapshotName, err)
 		}
 
-		// Добавляем файлы из этого снимка (более поздние версии перезаписывают более ранние)
-		for filePath, hash := range metadata.FileHashes {
-			fileSet[filePath] = hash
+		// Для полного снимка - добавляем ВСЕ файлы из FileHashes
+		// Для инкрементального - добавляем только измененные файлы
+		if metadata.SnapshotType == "full" {
+			// Полный снимок содержит все файлы проекта
+			for filePath, hash := range metadata.FileHashes {
+				fileSet[filePath] = hash
+			}
+		} else {
+			// Инкрементальный снимок содержит только измененные файлы
+			for _, filePath := range metadata.ChangedFiles {
+				if hash, exists := metadata.FileHashes[filePath]; exists {
+					fileSet[filePath] = hash
+				}
+			}
 		}
 	}
 

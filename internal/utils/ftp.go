@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jlaffaye/ftp"
@@ -31,8 +30,9 @@ type FTPClient interface {
 
 // RemoteFile represents a file on a remote server
 type RemoteFile struct {
-	Name string
-	Size int64
+	Name  string
+	Size  int64
+	IsDir bool
 }
 
 // implementation of an FTP client
@@ -98,14 +98,25 @@ func (f *MyFTPClient) ListFiles(directory string) ([]RemoteFile, error) {
 					// Normalize path separators for consistency
 					filePath = filepath.ToSlash(filePath)
 					allFiles = append(allFiles, RemoteFile{
-						Name: filePath,
-						Size: int64(entry.Size),
+						Name:  filePath,
+						Size:  int64(entry.Size),
+						IsDir: false,
 					})
 				} else if entry.Type == ftp.EntryTypeFolder {
-					// Skip hidden directories and common system directories
-					if entry.Name == "." || entry.Name == ".." || strings.HasPrefix(entry.Name, ".") {
+					// Skip only current and parent directory references
+					if entry.Name == "." || entry.Name == ".." {
 						continue
 					}
+
+					// Add directory to the list (even if empty)
+					dirPath := filepath.Join(dir, entry.Name)
+					dirPath = filepath.ToSlash(dirPath)
+					allFiles = append(allFiles, RemoteFile{
+						Name:  dirPath,
+						Size:  0, // Directories have size 0
+						IsDir: true,
+					})
+
 					newDir := filepath.Join(dir, entry.Name)
 					fmt.Printf("Entering folder: %s\n", newDir)
 					err := walkDir(newDir)
@@ -308,23 +319,35 @@ func (s *MySFTPClient) ListFiles(directory string) ([]RemoteFile, error) {
 
 			for _, file := range files {
 				if file.IsDir() {
-					// Skip hidden directories and common system directories
-					if file.Name() == "." || file.Name() == ".." || strings.HasPrefix(file.Name(), ".") {
+					// Skip only current and parent directory references
+					if file.Name() == "." || file.Name() == ".." {
 						continue
 					}
+
+					// Add directory to the list (even if empty)
+					dirPath := dir + "/" + file.Name()
+					allFiles = append(allFiles, RemoteFile{
+						Name:  dirPath,
+						Size:  0, // Directories have size 0
+						IsDir: true,
+					})
+
 					// Recursively traversing folders
-					err := walkDir(filepath.Join(dir, file.Name()))
+					subDir := filepath.Join(dir, file.Name())
+					// Convert to forward slashes for SFTP
+					subDir = filepath.ToSlash(subDir)
+					err := walkDir(subDir)
 					if err != nil {
 						return err
 					}
 				} else {
 					// Add files to the list
-					filePath := filepath.Join(dir, file.Name())
-					// Normalize path separators for consistency
-					filePath = filepath.ToSlash(filePath)
+					// Use forward slashes directly for SFTP paths
+					filePath := dir + "/" + file.Name()
 					allFiles = append(allFiles, RemoteFile{
-						Name: filePath,
-						Size: file.Size(),
+						Name:  filePath,
+						Size:  file.Size(),
+						IsDir: false,
 					})
 				}
 			}
